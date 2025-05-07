@@ -1,0 +1,101 @@
+---
+Metadata:
+  AWSToolsMetrics:
+    IaC_Generator: "arn:aws:cloudformation:us-east-2:020040093233:generatedTemplate/f3aa2425-a201-4a80-8e37-16a770eaca3b"
+Resources:
+  ProcessedTextBucket:
+    UpdateReplacePolicy: "Retain"
+    Type: "AWS::S3::Bucket"
+    DeletionPolicy: "Retain"
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - BucketKeyEnabled: false
+          ServerSideEncryptionByDefault:
+            SSEAlgorithm: "AES256"
+      BucketName: !Sub "${Environment}-processed-text-bucket"
+      VersioningConfiguration:
+        Status: "Enabled"
+      LifecycleConfiguration:
+        Rules:
+          - Id: "DeleteOldVersions"
+            Status: "Enabled"
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+
+  InputQueue:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      QueueName: !Sub "${Environment}-input-queue"
+      VisibilityTimeout: 900
+      MessageRetentionPeriod: 1209600
+
+  OutputQueue:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      QueueName: !Sub "${Environment}-output-queue"
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 1209600
+
+  TextProcessingFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      FunctionName: !Sub "${Environment}-text-processing"
+      Handler: "main"
+      Role: !GetAtt "LambdaExecutionRole.Arn"
+      Code:
+        ZipFile: |
+          # Lambda code will be deployed separately
+      Runtime: "go1.x"
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          OPENAI_API_KEY: !Ref "OpenAIApiKey"
+          SQS_INPUT_QUEUE_URL: !Ref "InputQueue"
+          SQS_OUTPUT_QUEUE_URL: !Ref "OutputQueue"
+          S3_BUCKET_NAME: !Ref "ProcessedTextBucket"
+          MONGODB_URI: !Ref "MongoDBUri"
+          MONGODB_DB_NAME: !Ref "MongoDBDatabaseName"
+          MONGODB_COLLECTION_NAME: !Ref "MongoDBCollectionName"
+
+  LambdaExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+      Policies:
+        - PolicyName: "TextProcessingPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "sqs:ReceiveMessage"
+                  - "sqs:DeleteMessage"
+                  - "sqs:GetQueueAttributes"
+                  - "sqs:ChangeMessageVisibility"
+                  - "sqs:SendMessage"
+                Resource:
+                  - !GetAtt "InputQueue.Arn"
+                  - !GetAtt "OutputQueue.Arn"
+              - Effect: "Allow"
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                Resource: !Sub "${ProcessedTextBucket.Arn}/*"
+
+  InputQueueEventSource:
+    Type: "AWS::Lambda::EventSourceMapping"
+    Properties:
+      BatchSize: 1
+      Enabled: true
+      EventSourceArn: !GetAtt "InputQueue.Arn"
+      FunctionName: !Ref "TextProcessingFunction"
