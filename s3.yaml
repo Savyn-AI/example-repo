@@ -13,7 +13,7 @@ Resources:
         - BucketKeyEnabled: false
           ServerSideEncryptionByDefault:
             SSEAlgorithm: "AES256"
-      BucketName: !Sub "${Environment}-processed-text-bucket"
+      BucketName: "processed-text-bucket"
       VersioningConfiguration:
         Status: "Enabled"
       LifecycleConfiguration:
@@ -26,23 +26,26 @@ Resources:
   InputQueue:
     Type: "AWS::SQS::Queue"
     Properties:
-      QueueName: !Sub "${Environment}-input-queue"
+      QueueName: "input-queue"
       VisibilityTimeout: 900
       MessageRetentionPeriod: 1209600
 
   OutputQueue:
     Type: "AWS::SQS::Queue"
     Properties:
-      QueueName: !Sub "${Environment}-output-queue"
+      QueueName: "output-queue"
       VisibilityTimeout: 300
       MessageRetentionPeriod: 1209600
 
   TextProcessingFunction:
     Type: "AWS::Lambda::Function"
     Properties:
-      FunctionName: !Sub "${Environment}-text-processing"
+      FunctionName: "text-processing"
       Handler: "main"
-      Role: !GetAtt "LambdaExecutionRole.Arn"
+      Role:
+        Fn::GetAtt:
+          - LambdaExecutionRole
+          - Arn
       Code:
         ZipFile: |
           # Lambda code will be deployed separately
@@ -51,13 +54,20 @@ Resources:
       MemorySize: 1024
       Environment:
         Variables:
-          OPENAI_API_KEY: !Ref "OpenAIApiKey"
-          SQS_INPUT_QUEUE_URL: !Ref "InputQueue"
-          SQS_OUTPUT_QUEUE_URL: !Ref "OutputQueue"
-          S3_BUCKET_NAME: !Ref "ProcessedTextBucket"
-          MONGODB_URI: !Ref "MongoDBUri"
-          MONGODB_DB_NAME: !Ref "MongoDBDatabaseName"
-          MONGODB_COLLECTION_NAME: !Ref "MongoDBCollectionName"
+          OPENAI_API_KEY:
+            Ref: OpenAIApiKey
+          SQS_INPUT_QUEUE_URL:
+            Ref: InputQueue
+          SQS_OUTPUT_QUEUE_URL:
+            Ref: OutputQueue
+          S3_BUCKET_NAME:
+            Ref: ProcessedTextBucket
+          MONGODB_URI:
+            Ref: MongoDBUri
+          MONGODB_DB_NAME:
+            Ref: MongoDBDatabaseName
+          MONGODB_COLLECTION_NAME:
+            Ref: MongoDBCollectionName
 
   LambdaExecutionRole:
     Type: "AWS::IAM::Role"
@@ -84,18 +94,29 @@ Resources:
                   - "sqs:ChangeMessageVisibility"
                   - "sqs:SendMessage"
                 Resource:
-                  - !GetAtt "InputQueue.Arn"
-                  - !GetAtt "OutputQueue.Arn"
+                  - 
+                    Fn::GetAtt:
+                      - InputQueue
+                      - Arn
+                  - 
+                    Fn::GetAtt:
+                      - OutputQueue
+                      - Arn
               - Effect: "Allow"
                 Action:
                   - "s3:PutObject"
                   - "s3:GetObject"
-                Resource: !Sub "${ProcessedTextBucket.Arn}/*"
+                Resource:
+                  Fn::Sub: "${ProcessedTextBucket.Arn}/*"
 
   InputQueueEventSource:
     Type: "AWS::Lambda::EventSourceMapping"
     Properties:
       BatchSize: 1
       Enabled: true
-      EventSourceArn: !GetAtt "InputQueue.Arn"
-      FunctionName: !Ref "TextProcessingFunction"
+      EventSourceArn:
+        Fn::GetAtt:
+          - InputQueue
+          - Arn
+      FunctionName:
+        Ref: TextProcessingFunction
